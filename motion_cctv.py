@@ -206,13 +206,9 @@ def detect_motion_segments_opencv(
         raise RuntimeError(f"Could not open video: {video_path}")
 
     # Enable GPU-accelerated video decoding if available
-    if gpu_available:
-        try:
-            # Try to use CUDA-accelerated backend (if supported)
-            if hasattr(cv2, 'CAP_PROP_HW_ACCELERATION') and hasattr(cv2, 'VIDEO_ACCELERATION_ANY'):
-                cap.set(cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY)
-        except Exception:
-            pass
+    # Note: Hardware acceleration for video decoding is typically configured
+    # at OpenCV build time or through backend-specific environment variables
+    # rather than through VideoCapture properties
 
     # Try to get properties from OpenCV too
     cv_fps = cap.get(cv2.CAP_PROP_FPS)
@@ -492,10 +488,18 @@ def make_clip(
     if reencode_video:
         # frame-accurate, slower
         if gpu_encoder:
-            # GPU-accelerated encoding
+            # GPU-accelerated encoding with appropriate hardware acceleration
+            hwaccel_method = "auto"
+            if "vaapi" in gpu_encoder:
+                hwaccel_method = "vaapi"
+            elif "qsv" in gpu_encoder:
+                hwaccel_method = "qsv"
+            elif "nvenc" in gpu_encoder:
+                hwaccel_method = "cuda"
+            
             cmd = [
                 FFMPEG_EXE, "-hide_banner", "-y",
-                "-hwaccel", "auto",  # Enable hardware acceleration for decoding
+                "-hwaccel", hwaccel_method,  # Hardware-specific acceleration
                 "-ss", fmt_time(start_s), "-to", fmt_time(end_s),
                 "-i", str(input_path),
                 "-c:v", gpu_encoder,
@@ -512,7 +516,9 @@ def make_clip(
                 cmd.extend(["-qp", str(min(51, max(0, crf)))])
             elif "videotoolbox" in gpu_encoder:
                 # VideoToolbox: q:v parameter, 0-100 (lower is better)
-                quality = min(100, max(0, int(crf * 1.96)))  # Map 0-51 to 0-100
+                # Map libx264 CRF (0-51) to VideoToolbox quality (0-100)
+                VIDEOTOOLBOX_CRF_MULTIPLIER = 1.96  # 100/51 ≈ 1.96
+                quality = min(100, max(0, int(crf * VIDEOTOOLBOX_CRF_MULTIPLIER)))
                 cmd.extend(["-q:v", str(quality)])
             else:
                 # Fallback for unknown encoder
