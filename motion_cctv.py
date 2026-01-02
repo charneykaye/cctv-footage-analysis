@@ -217,14 +217,15 @@ def detect_motion_segments_opencv(
         raise RuntimeError("OpenCV not installed. Run: pip install opencv-python") from e
     
     # Verify cv2 has required attributes (detects broken/incomplete installations)
-    required_attrs = ['VideoCapture', 'createBackgroundSubtractorMOG2', 'cvtColor', 
+    required_attrs = ['VideoCapture', 'createBackgroundSubtractorMOG2', 'cvtColor',
                       'GaussianBlur', 'threshold', 'findContours', 'contourArea']
     missing_attrs = [attr for attr in required_attrs if not hasattr(cv2, attr)]
     
     if missing_attrs:
         raise RuntimeError(
             f"OpenCV installation is incomplete or broken. Missing attributes: {', '.join(missing_attrs)}\n"
-            "Try reinstalling: pip uninstall opencv-python opencv-contrib-python -y && pip install opencv-python"
+            "Try reinstalling: pip uninstall opencv-python opencv-contrib-python -y && "
+            "pip install opencv-python"
         )
 
     # Check GPU availability
