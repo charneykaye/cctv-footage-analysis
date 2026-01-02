@@ -62,6 +62,13 @@ This tool instead answers the question:
 pip install opencv-python
 ```
 
+For **GPU acceleration** (optional but recommended):
+```bash
+pip install opencv-contrib-python
+```
+
+Note: GPU acceleration requires CUDA-enabled OpenCV build and compatible GPU hardware (NVIDIA with CUDA support).
+
 FFmpeg (Windows recommended via Chocolatey):
 
 ```powershell
@@ -69,6 +76,33 @@ choco install ffmpeg
 ```
 
 Or ensure `ffmpeg.exe` and `ffprobe.exe` are on your `PATH`.
+
+---
+
+## GPU Acceleration
+
+Motion CCTV automatically detects and uses GPU acceleration when available:
+
+### OpenCV CUDA Acceleration
+- **Background subtraction (MOG2)** - runs on GPU
+- **Image resizing** - GPU-accelerated
+- **Color conversion and blur** - GPU-accelerated  
+- **Morphological operations** - GPU-accelerated
+
+### FFmpeg Hardware Encoding
+Automatically detects and uses available GPU encoders:
+- **NVIDIA NVENC** (h264_nvenc) - NVIDIA GPUs
+- **Intel Quick Sync** (h264_qsv) - Intel CPUs with iGPU
+- **VA-API** (h264_vaapi) - Linux with compatible hardware
+- **VideoToolbox** (h264_videotoolbox) - macOS
+
+### Disabling GPU
+To force CPU-only processing:
+```bash
+python motion_cctv.py /path/to/videos --no-gpu
+```
+
+GPU acceleration provides significant performance improvements (typically 2-5x faster) when processing large video files.
 
 ---
 
