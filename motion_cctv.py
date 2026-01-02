@@ -253,17 +253,7 @@ def detect_motion_segments_opencv(
     # ROI mask (optional): roi = (x, y, w, h) as 0..1 fractions
     roi_rect = None
 
-    # GPU matrices for morphology operations
-    gpu_kernel = None
-    if gpu_available:
-        try:
-            kernel_cpu = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-            gpu_kernel = cv2.cuda_GpuMat()
-            gpu_kernel.upload(kernel_cpu)
-        except Exception:
-            pass
-
-    # Read first frame to compute scaling + ROI mask shape
+    # Read first frame to compute scaling + ROI mask shape and initialize GPU resources
     ret, frame = cap.read()
     if not ret:
         cap.release()
@@ -274,8 +264,29 @@ def detect_motion_segments_opencv(
     if downscale_width and w0 > downscale_width:
         scale = downscale_width / float(w0)
 
+    # Pre-create filters and kernels outside the loop for better performance
+    cpu_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    
+    # GPU resources (created once, reused for all frames)
+    gpu_gaussian_filter = None
+    gpu_morph_open_filter = None
+    gpu_morph_dilate_filter = None
+    
+    if gpu_available:
+        try:
+            # Create a test frame to determine the size for filters
+            test_fr = frame
+            if scale != 1.0:
+                test_fr = cv2.resize(test_fr, (int(w0 * scale), int(h0 * scale)), interpolation=cv2.INTER_AREA)
+            
+            # These will be created after ROI is determined in prep()
+            # For now, mark that we want to use GPU
+            pass
+        except Exception:
+            gpu_available = False
+
     def prep(frame_in):
-        nonlocal roi_rect
+        nonlocal roi_rect, gpu_gaussian_filter, gpu_morph_open_filter, gpu_morph_dilate_filter
         fr = frame_in
         
         # GPU-accelerated resize if available
@@ -312,9 +323,12 @@ def detect_motion_segments_opencv(
                 gpu_frame.upload(fr)
                 gpu_gray = cv2.cuda.cvtColor(gpu_frame, cv2.COLOR_BGR2GRAY)
                 
-                # CUDA Gaussian filter
-                gaussian_filter = cv2.cuda.createGaussianFilter(gpu_gray.type(), gpu_gray.type(), (5, 5), 0)
-                gpu_gray = gaussian_filter.apply(gpu_gray)
+                # Create Gaussian filter once on first call
+                if gpu_gaussian_filter is None:
+                    gpu_gaussian_filter = cv2.cuda.createGaussianFilter(gpu_gray.type(), gpu_gray.type(), (5, 5), 0)
+                
+                # Apply pre-created filter
+                gpu_gray = gpu_gaussian_filter.apply(gpu_gray)
                 
                 gray = gpu_gray.download()
             except Exception:
@@ -358,26 +372,28 @@ def detect_motion_segments_opencv(
         _, fgmask = cv2.threshold(fgmask, 200, 255, cv2.THRESH_BINARY)
 
         # Morphology to suppress speckle noise (GPU-accelerated if available)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        if gpu_available and gpu_kernel is not None:
+        if gpu_available:
             try:
                 gpu_fgmask = cv2.cuda_GpuMat()
                 gpu_fgmask.upload(fgmask)
                 
-                # CUDA morphology operations
-                morph_filter = cv2.cuda.createMorphologyFilter(cv2.MORPH_OPEN, gpu_fgmask.type(), kernel)
-                gpu_fgmask = morph_filter.apply(gpu_fgmask)
+                # Create morphology filters once on first iteration
+                if gpu_morph_open_filter is None:
+                    gpu_morph_open_filter = cv2.cuda.createMorphologyFilter(cv2.MORPH_OPEN, gpu_fgmask.type(), cpu_kernel)
+                if gpu_morph_dilate_filter is None:
+                    gpu_morph_dilate_filter = cv2.cuda.createMorphologyFilter(cv2.MORPH_DILATE, gpu_fgmask.type(), cpu_kernel)
                 
-                dilate_filter = cv2.cuda.createMorphologyFilter(cv2.MORPH_DILATE, gpu_fgmask.type(), kernel)
-                gpu_fgmask = dilate_filter.apply(gpu_fgmask)
+                # Apply pre-created filters
+                gpu_fgmask = gpu_morph_open_filter.apply(gpu_fgmask)
+                gpu_fgmask = gpu_morph_dilate_filter.apply(gpu_fgmask)
                 
                 fgmask = gpu_fgmask.download()
             except Exception:
-                fgmask = cv2.morphologyEx(fgmask, cv2.MORPH_OPEN, kernel, iterations=1)
-                fgmask = cv2.dilate(fgmask, kernel, iterations=1)
+                fgmask = cv2.morphologyEx(fgmask, cv2.MORPH_OPEN, cpu_kernel, iterations=1)
+                fgmask = cv2.dilate(fgmask, cpu_kernel, iterations=1)
         else:
-            fgmask = cv2.morphologyEx(fgmask, cv2.MORPH_OPEN, kernel, iterations=1)
-            fgmask = cv2.dilate(fgmask, kernel, iterations=1)
+            fgmask = cv2.morphologyEx(fgmask, cv2.MORPH_OPEN, cpu_kernel, iterations=1)
+            fgmask = cv2.dilate(fgmask, cpu_kernel, iterations=1)
 
         # Ignore motion until warmup completes (let background model stabilize)
         if frame_idx <= warmup_frames:
