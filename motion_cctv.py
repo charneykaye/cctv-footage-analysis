@@ -54,6 +54,24 @@ def check_cuda_available() -> bool:
         pass
     return False
 
+def get_cuda_unavailable_reason() -> str:
+    """Determine why CUDA is not available and provide guidance."""
+    try:
+        import cv2
+        if not hasattr(cv2, 'cuda'):
+            return "OpenCV was built without CUDA support. Install a CUDA-enabled build to use GPU acceleration."
+        try:
+            count = cv2.cuda.getCudaEnabledDeviceCount()
+            if count == 0:
+                # Check if this is because OpenCV wasn't built with CUDA or no devices
+                # Standard pip opencv-python has the cuda module but it's non-functional
+                return "OpenCV was built without CUDA support. To enable: build OpenCV from source with CUDA, or use a CUDA-enabled package."
+        except Exception:
+            return "OpenCV CUDA module present but non-functional. Install a CUDA-enabled OpenCV build."
+        return "CUDA is available but could not be initialized."
+    except Exception as e:
+        return f"Error checking CUDA: {str(e)}"
+
 def get_gpu_encoder_for_ffmpeg() -> Optional[str]:
     """Detect available GPU encoder for FFmpeg."""
     # Try to detect GPU encoders and verify they work
@@ -670,7 +688,9 @@ def main():
         if cuda_available:
             log("[GPU] CUDA is available for OpenCV operations")
         else:
-            log("[GPU] CUDA not available, OpenCV will use CPU")
+            reason = get_cuda_unavailable_reason()
+            log(f"[GPU] CUDA not available: {reason}")
+            log("[GPU] OpenCV will use CPU for motion detection")
         
         # Detect GPU encoder for FFmpeg
         gpu_encoder = get_gpu_encoder_for_ffmpeg()

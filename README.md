@@ -62,12 +62,28 @@ This tool instead answers the question:
 pip install opencv-python
 ```
 
-For **GPU acceleration** (optional but recommended):
-```bash
-pip install opencv-contrib-python
+**Note:** The standard `opencv-python` package from PyPI does **not** include CUDA support.
+
+### Enabling GPU Acceleration (OpenCV CUDA)
+
+To enable CUDA acceleration in OpenCV, you need a CUDA-enabled build. Options:
+
+**Option 1: Build OpenCV from source with CUDA** (recommended for best performance)
+- Follow the official OpenCV build instructions with `-DWITH_CUDA=ON`
+- See: https://docs.opencv.org/master/d6/d15/tutorial_building_tegra_cuda.html
+
+**Option 2: Use pre-built CUDA packages** (if available for your platform)
+- Windows: Check https://github.com/opencv/opencv/releases or community builds
+- Linux: Some distributions provide `python3-opencv-cuda` packages
+
+**Verify CUDA support:**
+```python
+python -c "import cv2; print('CUDA devices:', cv2.cuda.getCudaEnabledDeviceCount())"
 ```
 
-Note: GPU acceleration requires CUDA-enabled OpenCV build and compatible GPU hardware (NVIDIA with CUDA support).
+If CUDA is properly configured, this will show the number of available CUDA devices (e.g., "CUDA devices: 1").
+
+**Note:** Even without CUDA, the script will still benefit from FFmpeg hardware encoding (NVENC on NVIDIA GPUs) if you have appropriate drivers installed.
 
 FFmpeg (Windows recommended via Chocolatey):
 
