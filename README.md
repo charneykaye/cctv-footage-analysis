@@ -1,4 +1,4 @@
-# Motion CCTV — Motion-Only Clip Extraction for Security Footage
+# Motion-Only Clip Extraction for Security Footage
 
 **Motion CCTV** is a free, open-source command-line tool for extracting **motion-only clips from security camera footage** on Windows (and other platforms).
 
