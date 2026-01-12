@@ -212,17 +212,17 @@ motion_output/
 
 ### `segments.csv` columns
 
-| Column | Description |
-|------|------------|
-| source_file | Original video filename |
-| clip_index | Index within that video |
-| start_seconds | Segment start time |
-| end_seconds | Segment end time |
-| duration_seconds | Segment length |
+| Column            | Description                       |
+|-------------------|-----------------------------------|
+| source_file       | Original video filename           |
+| clip_index        | Index within that video           |
+| start_seconds     | Segment start time                |
+| end_seconds       | Segment end time                  |
+| duration_seconds  | Segment length                    |
 | peak_motion_ratio | Max motion intensity during event |
-| clip_path | Relative path to output clip |
-| status | `ok` or `failed` |
-| error | Error message if clip failed |
+| clip_path         | Relative path to output clip      |
+| status            | `ok` or `failed`                  |
+| error             | Error message if clip failed      |
 
 ---
 
