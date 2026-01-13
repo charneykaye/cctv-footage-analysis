@@ -200,14 +200,12 @@ def detect_motion_segments_opencv(
     roi: Optional[Tuple[float, float, float, float]],
     progress_every_s: float = 2.0,
     use_gpu: bool = True,
-    frame_skip: int = 1,
     hwaccel_decode: bool = False,
 ) -> List[Tuple[float, float, float]]:
     """
     Returns list of (start_s, end_s, peak_motion_ratio)
     
     If use_gpu=True and CUDA is available, uses GPU-accelerated operations.
-    If frame_skip > 1, processes every Nth frame (e.g., frame_skip=2 processes every 2nd frame).
     If hwaccel_decode=True, attempts to use hardware-accelerated video decoding.
     """
     try:
@@ -260,11 +258,6 @@ def detect_motion_segments_opencv(
     if cv_fps and cv_fps > 1:
         fps = float(cv_fps)
 
-    # Adjust effective FPS if we're skipping frames
-    effective_fps = fps / frame_skip if frame_skip > 1 else fps
-    if frame_skip > 1:
-        log(f"  [Frame Skip] Processing every {frame_skip} frame(s), effective FPS: {effective_fps:.2f}")
-
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     if total_frames <= 0:
         total_frames = int(duration_s * fps)
@@ -283,7 +276,7 @@ def detect_motion_segments_opencv(
     else:
         fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=16, detectShadows=True)
 
-    warmup_frames = max(0, int(warmup_seconds * effective_fps))
+    warmup_frames = max(0, int(warmup_seconds * fps))
 
     in_event = False
     event_start = 0.0
@@ -380,21 +373,12 @@ def detect_motion_segments_opencv(
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     frame_idx = 0
-    processed_frame_idx = 0  # Index of frames actually processed (after skipping)
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
         frame_idx += 1
-        
-        # Skip frames if frame_skip > 1
-        if frame_skip > 1 and (frame_idx - 1) % frame_skip != 0:
-            continue
-        
-        processed_frame_idx += 1
-        # t_s is the actual timestamp in the video for this frame
-        # This is based on frame_idx (not processed_frame_idx) to give accurate video timestamps
         t_s = frame_idx / fps
 
         gray = prep(frame)
@@ -441,7 +425,7 @@ def detect_motion_segments_opencv(
             fgmask = cv2.dilate(fgmask, cpu_kernel, iterations=1)
 
         # Ignore motion until warmup completes (let background model stabilize)
-        if processed_frame_idx <= warmup_frames:
+        if frame_idx <= warmup_frames:
             continue
 
         # Measure motion: sum area of significant contours
@@ -690,7 +674,6 @@ def main():
 
     # Detection tuning
     ap.add_argument("--downscale-width", type=int, default=640, help="Downscale width for detection (speeds up, reduces noise).")
-    ap.add_argument("--frame-skip", type=int, default=2, help="Process every Nth frame (e.g., 2 = every 2nd frame, 3 = every 3rd frame). Default: 2 (process every other frame).")
     ap.add_argument("--warmup-seconds", type=float, default=2.0, help="Seconds to let background model stabilize.")
     ap.add_argument("--motion-ratio", type=float, default=0.003, help="Motion ratio threshold (fraction of ROI area). Start 0.002–0.01.")
     ap.add_argument("--min-motion-frames", type=int, default=8, help="Require motion persists this many frames to start an event.")
@@ -715,11 +698,6 @@ def main():
 
     ap.add_argument("--csv-name", type=str, default="segments.csv")
     args = ap.parse_args()
-    
-    # Validate frame_skip
-    if args.frame_skip < 1:
-        log("ERROR: --frame-skip must be at least 1")
-        sys.exit(2)
 
     in_dir = Path(args.input_folder).expanduser().resolve()
     if not in_dir.exists() or not in_dir.is_dir():
@@ -767,7 +745,6 @@ def main():
     log(f"[io] output: {out_dir}")
     log("[cfg] DETECT:"
         f" downscale_width={args.downscale_width}"
-        f" frame_skip={args.frame_skip}"
         f" warmup={args.warmup_seconds}s"
         f" motion_ratio={args.motion_ratio}"
         f" min_motion_frames={args.min_motion_frames}"
@@ -833,7 +810,6 @@ def main():
                     pad_s=args.pad,
                     roi=roi,
                     use_gpu=use_gpu,
-                    frame_skip=args.frame_skip,
                     hwaccel_decode=args.hwaccel_decode,
                 )
 
