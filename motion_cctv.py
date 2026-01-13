@@ -270,26 +270,18 @@ def detect_motion_segments_opencv(
         total_frames = int(duration_s * fps)
 
     # Background subtractor tuned for CCTV-ish footage
-    # history: Number of frames used for background learning. Must be large enough to handle
-    # long-duration motion events without absorbing moving objects into the background.
-    # With frame_skip=2 and fps=30, history=500 means only 33 seconds of coverage.
-    # Use much larger history to prevent objects from becoming "background" during long events.
-    bg_history = 5000  # ~5-6 minutes of learning window with default frame_skip
-    # varThreshold: lower = more sensitive to motion, higher = only obvious motion
-    bg_var_threshold = 16
-    
+    # history: longer = more stable background; varThreshold controls sensitivity
     if gpu_available:
         try:
             # Try CUDA version first
-            fgbg = cv2.cuda.createBackgroundSubtractorMOG2(history=bg_history, varThreshold=bg_var_threshold, detectShadows=True)
-            log(f"  [GPU] Using CUDA BackgroundSubtractorMOG2 (history={bg_history}, varThreshold={bg_var_threshold})")
+            fgbg = cv2.cuda.createBackgroundSubtractorMOG2(history=500, varThreshold=16, detectShadows=True)
+            log("  [GPU] Using CUDA BackgroundSubtractorMOG2")
         except Exception:
             gpu_available = False
-            fgbg = cv2.createBackgroundSubtractorMOG2(history=bg_history, varThreshold=bg_var_threshold, detectShadows=True)
-            log(f"  [MOG2] Using CPU BackgroundSubtractorMOG2 (history={bg_history}, varThreshold={bg_var_threshold})")
+            fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=16, detectShadows=True)
+            log("  [GPU] CUDA MOG2 not available, using CPU version")
     else:
-        fgbg = cv2.createBackgroundSubtractorMOG2(history=bg_history, varThreshold=bg_var_threshold, detectShadows=True)
-        log(f"  [MOG2] Using CPU BackgroundSubtractorMOG2 (history={bg_history}, varThreshold={bg_var_threshold})")
+        fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=16, detectShadows=True)
 
     warmup_frames = max(0, int(warmup_seconds * effective_fps))
 
@@ -408,21 +400,16 @@ def detect_motion_segments_opencv(
         gray = prep(frame)
 
         # Apply background subtraction (GPU or CPU)
-        # Use a very slow learning rate to prevent moving objects from being absorbed into background
-        # Default (-1) uses automatic learning rate which adapts too quickly for long events
-        # Use 0.0001 to make background model very stable (only adapts to genuine background changes)
-        learning_rate = 0.0001
-        
         if gpu_available:
             try:
                 gpu_gray = cv2.cuda_GpuMat()
                 gpu_gray.upload(gray)
-                gpu_fgmask = fgbg.apply(gpu_gray, learning_rate)
+                gpu_fgmask = fgbg.apply(gpu_gray, -1)
                 fgmask = gpu_fgmask.download()
             except Exception:
-                fgmask = fgbg.apply(gray, learning_rate)
+                fgmask = fgbg.apply(gray)
         else:
-            fgmask = fgbg.apply(gray, learning_rate)
+            fgmask = fgbg.apply(gray)
 
         # Clean up mask:
         # - remove shadows (MOG2 shadows are 127)
@@ -474,14 +461,19 @@ def detect_motion_segments_opencv(
         if is_motion:
             if motion_run == 0:
                 # Motion just started - record when this motion run began
-                potential_event_start = t_s
+                # Only update if we haven't recorded a start yet (potential_event_start == 0)
+                if potential_event_start == 0.0:
+                    potential_event_start = t_s
             motion_run += 1
             still_run = 0
             if in_event:
                 peak_ratio = max(peak_ratio, ratio)
         else:
             still_run += 1
-            motion_run = 0
+            # Only reset motion_run if we haven't committed to an event yet
+            # This allows brief gaps without losing track of event start
+            if not in_event:
+                motion_run = 0
 
         # Start event only if motion persists
         if (not in_event) and is_motion and motion_run >= min_motion_frames:
@@ -496,6 +488,8 @@ def detect_motion_segments_opencv(
             segments.append((event_start, event_end, peak_ratio))
             in_event = False
             peak_ratio = 0.0
+            potential_event_start = 0.0  # Reset for next event
+            motion_run = 0  # Reset motion counter for next event
 
         # Periodic progress
         now = time.time()
