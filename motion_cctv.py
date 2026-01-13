@@ -200,14 +200,12 @@ def detect_motion_segments_opencv(
     roi: Optional[Tuple[float, float, float, float]],
     progress_every_s: float = 2.0,
     use_gpu: bool = True,
-    frame_skip: int = 1,
     hwaccel_decode: bool = False,
 ) -> List[Tuple[float, float, float]]:
     """
     Returns list of (start_s, end_s, peak_motion_ratio)
     
     If use_gpu=True and CUDA is available, uses GPU-accelerated operations.
-    If frame_skip > 1, processes every Nth frame (e.g., frame_skip=2 processes every 2nd frame).
     If hwaccel_decode=True, attempts to use hardware-accelerated video decoding.
     """
     try:
@@ -260,38 +258,25 @@ def detect_motion_segments_opencv(
     if cv_fps and cv_fps > 1:
         fps = float(cv_fps)
 
-    # Adjust effective FPS if we're skipping frames
-    effective_fps = fps / frame_skip if frame_skip > 1 else fps
-    if frame_skip > 1:
-        log(f"  [Frame Skip] Processing every {frame_skip} frame(s), effective FPS: {effective_fps:.2f}")
-
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     if total_frames <= 0:
         total_frames = int(duration_s * fps)
 
     # Background subtractor tuned for CCTV-ish footage
-    # history: Number of frames used for background learning. Must be large enough to handle
-    # long-duration motion events without absorbing moving objects into the background.
-    # With frame_skip=2 and fps=30, history=500 means only 33 seconds of coverage.
-    # Use much larger history to prevent objects from becoming "background" during long events.
-    bg_history = 5000  # ~5-6 minutes of learning window with default frame_skip
-    # varThreshold: lower = more sensitive to motion, higher = only obvious motion
-    bg_var_threshold = 16
-    
+    # history: longer = more stable background; varThreshold controls sensitivity
     if gpu_available:
         try:
             # Try CUDA version first
-            fgbg = cv2.cuda.createBackgroundSubtractorMOG2(history=bg_history, varThreshold=bg_var_threshold, detectShadows=True)
-            log(f"  [GPU] Using CUDA BackgroundSubtractorMOG2 (history={bg_history}, varThreshold={bg_var_threshold})")
+            fgbg = cv2.cuda.createBackgroundSubtractorMOG2(history=500, varThreshold=16, detectShadows=True)
+            log("  [GPU] Using CUDA BackgroundSubtractorMOG2")
         except Exception:
             gpu_available = False
-            fgbg = cv2.createBackgroundSubtractorMOG2(history=bg_history, varThreshold=bg_var_threshold, detectShadows=True)
-            log(f"  [MOG2] Using CPU BackgroundSubtractorMOG2 (history={bg_history}, varThreshold={bg_var_threshold})")
+            fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=16, detectShadows=True)
+            log("  [GPU] CUDA MOG2 not available, using CPU version")
     else:
-        fgbg = cv2.createBackgroundSubtractorMOG2(history=bg_history, varThreshold=bg_var_threshold, detectShadows=True)
-        log(f"  [MOG2] Using CPU BackgroundSubtractorMOG2 (history={bg_history}, varThreshold={bg_var_threshold})")
+        fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=16, detectShadows=True)
 
-    warmup_frames = max(0, int(warmup_seconds * effective_fps))
+    warmup_frames = max(0, int(warmup_seconds * fps))
 
     in_event = False
     event_start = 0.0
@@ -388,41 +373,27 @@ def detect_motion_segments_opencv(
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     frame_idx = 0
-    processed_frame_idx = 0  # Index of frames actually processed (after skipping)
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
         frame_idx += 1
-        
-        # Skip frames if frame_skip > 1
-        if frame_skip > 1 and (frame_idx - 1) % frame_skip != 0:
-            continue
-        
-        processed_frame_idx += 1
-        # t_s is the actual timestamp in the video for this frame
-        # This is based on frame_idx (not processed_frame_idx) to give accurate video timestamps
         t_s = frame_idx / fps
 
         gray = prep(frame)
 
         # Apply background subtraction (GPU or CPU)
-        # Use a very slow learning rate to prevent moving objects from being absorbed into background
-        # Default (-1) uses automatic learning rate which adapts too quickly for long events
-        # Use 0.0001 to make background model very stable (only adapts to genuine background changes)
-        learning_rate = 0.0001
-        
         if gpu_available:
             try:
                 gpu_gray = cv2.cuda_GpuMat()
                 gpu_gray.upload(gray)
-                gpu_fgmask = fgbg.apply(gpu_gray, learning_rate)
+                gpu_fgmask = fgbg.apply(gpu_gray, -1)
                 fgmask = gpu_fgmask.download()
             except Exception:
-                fgmask = fgbg.apply(gray, learning_rate)
+                fgmask = fgbg.apply(gray)
         else:
-            fgmask = fgbg.apply(gray, learning_rate)
+            fgmask = fgbg.apply(gray)
 
         # Clean up mask:
         # - remove shadows (MOG2 shadows are 127)
@@ -454,7 +425,7 @@ def detect_motion_segments_opencv(
             fgmask = cv2.dilate(fgmask, cpu_kernel, iterations=1)
 
         # Ignore motion until warmup completes (let background model stabilize)
-        if processed_frame_idx <= warmup_frames:
+        if frame_idx <= warmup_frames:
             continue
 
         # Measure motion: sum area of significant contours
@@ -474,14 +445,19 @@ def detect_motion_segments_opencv(
         if is_motion:
             if motion_run == 0:
                 # Motion just started - record when this motion run began
-                potential_event_start = t_s
+                # Only update if we haven't recorded a start yet (potential_event_start == 0)
+                if potential_event_start == 0.0:
+                    potential_event_start = t_s
             motion_run += 1
             still_run = 0
             if in_event:
                 peak_ratio = max(peak_ratio, ratio)
         else:
             still_run += 1
-            motion_run = 0
+            # Only reset motion_run if we haven't committed to an event yet
+            # This allows brief gaps without losing track of event start
+            if not in_event:
+                motion_run = 0
 
         # Start event only if motion persists
         if (not in_event) and is_motion and motion_run >= min_motion_frames:
@@ -496,6 +472,8 @@ def detect_motion_segments_opencv(
             segments.append((event_start, event_end, peak_ratio))
             in_event = False
             peak_ratio = 0.0
+            potential_event_start = 0.0  # Reset for next event
+            motion_run = 0  # Reset motion counter for next event
 
         # Periodic progress
         now = time.time()
@@ -696,7 +674,6 @@ def main():
 
     # Detection tuning
     ap.add_argument("--downscale-width", type=int, default=640, help="Downscale width for detection (speeds up, reduces noise).")
-    ap.add_argument("--frame-skip", type=int, default=2, help="Process every Nth frame (e.g., 2 = every 2nd frame, 3 = every 3rd frame). Default: 2 (process every other frame).")
     ap.add_argument("--warmup-seconds", type=float, default=2.0, help="Seconds to let background model stabilize.")
     ap.add_argument("--motion-ratio", type=float, default=0.003, help="Motion ratio threshold (fraction of ROI area). Start 0.002–0.01.")
     ap.add_argument("--min-motion-frames", type=int, default=8, help="Require motion persists this many frames to start an event.")
@@ -721,11 +698,6 @@ def main():
 
     ap.add_argument("--csv-name", type=str, default="segments.csv")
     args = ap.parse_args()
-    
-    # Validate frame_skip
-    if args.frame_skip < 1:
-        log("ERROR: --frame-skip must be at least 1")
-        sys.exit(2)
 
     in_dir = Path(args.input_folder).expanduser().resolve()
     if not in_dir.exists() or not in_dir.is_dir():
@@ -773,7 +745,6 @@ def main():
     log(f"[io] output: {out_dir}")
     log("[cfg] DETECT:"
         f" downscale_width={args.downscale_width}"
-        f" frame_skip={args.frame_skip}"
         f" warmup={args.warmup_seconds}s"
         f" motion_ratio={args.motion_ratio}"
         f" min_motion_frames={args.min_motion_frames}"
@@ -839,7 +810,6 @@ def main():
                     pad_s=args.pad,
                     roi=roi,
                     use_gpu=use_gpu,
-                    frame_skip=args.frame_skip,
                     hwaccel_decode=args.hwaccel_decode,
                 )
 

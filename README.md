@@ -149,35 +149,17 @@ Frames are downscaled to 640px width for detection (configurable with `--downsca
 python motion_cctv.py /path/to/videos --downscale-width 480  # More aggressive
 ```
 
-### Frame Skipping (Default: OFF)
-Process every Nth frame instead of all frames:
-
-```bash
-python motion_cctv.py /path/to/videos --frame-skip 2  # Every 2nd frame (2x faster)
-python motion_cctv.py /path/to/videos --frame-skip 3  # Every 3rd frame (3x faster)
-```
-
-**Trade-offs:**
-- ✅ Dramatically faster processing (2-3x speedup)
-- ⚠️ May miss very brief motion events
-- ⚠️ Best for high FPS footage (30+ fps)
-
-**Recommended settings:**
-- 30 fps footage: `--frame-skip 2` (processes 15 fps)
-- 60 fps footage: `--frame-skip 3` (processes 20 fps)
-
 ### Combined Optimizations
 For maximum performance on high-quality CCTV footage:
 
 ```bash
 python motion_cctv.py /path/to/videos \
   --downscale-width 640 \
-  --frame-skip 2 \
   --hwaccel-decode \
   --reencode-video  # Only if re-encoding, enables GPU encoding
 ```
 
-This can provide 5-10x performance improvement on systems with GPU acceleration.
+This can provide significant performance improvement on systems with GPU acceleration.
 
 ---
 
