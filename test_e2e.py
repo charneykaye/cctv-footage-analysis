@@ -6,11 +6,13 @@ Tests that:
 1. motion_cctv.py runs successfully on example footage
 2. Exactly one motion clip is produced
 3. The clip starts at approximately 00:30 and ends at approximately 01:30
+   (with tolerance to account for actual motion detection in the example footage)
 """
 
 import csv
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -54,10 +56,12 @@ def main():
     # Clean up any existing output
     if output_dir.exists():
         print(f"\nCleaning up existing output: {output_dir}")
-        import shutil
         shutil.rmtree(output_dir)
     
     # Step 1: Run motion_cctv.py with parameters that produce one merged clip
+    # The example footage contains motion from approximately 30s to 105s
+    # We use --merge-gap 15.0 to merge nearby motion segments into one continuous clip
+    # We use --min-duration 50.0 to ensure we get substantial motion events only
     print("\n[Step 1] Running motion_cctv.py on example footage...")
     cmd = [
         sys.executable,
@@ -120,11 +124,12 @@ def main():
     print(f"Duration: {end_s - start_s:.3f}s")
     
     # Expected: starts at ~00:30 (30s) and ends at ~01:30 (90s)
-    # Based on actual motion in the example footage, the detected range is approximately 30-90s
-    # Allow reasonable tolerance for motion detection variability
+    # Based on actual motion in the example footage, the detected range is approximately 30-105s
+    # The main continuous motion event spans from about 30s to 90s, with possible extension
+    # Allow reasonable tolerance for motion detection variability and padding
     EXPECTED_START_MIN = 25.0  # Allow starting a bit earlier due to padding
     EXPECTED_START_MAX = 40.0  # Motion should start by 40s
-    EXPECTED_END_MIN = 85.0    # Motion should end at least by 85s (approaching 01:30)
+    EXPECTED_END_MIN = 85.0    # Motion should end at least by 85s (close to 01:30 = 90s)
     EXPECTED_END_MAX = 110.0   # Allow some extra for padding and motion continuation
     
     if not (EXPECTED_START_MIN <= start_s <= EXPECTED_START_MAX):
