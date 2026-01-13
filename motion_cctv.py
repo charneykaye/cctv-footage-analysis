@@ -283,7 +283,16 @@ def detect_motion_segments_opencv(
     else:
         fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=16, detectShadows=True)
 
-    warmup_frames = max(0, int(warmup_seconds * effective_fps))
+    # Warmup period should be long enough for background model to stabilize
+    # Use at least warmup_seconds worth of frames, but cap at a reasonable maximum
+    # to avoid ignoring too much of short videos (fixes subset axiom while staying practical)
+    bg_history = 500  # Match the history value used in MOG2
+    min_warmup_from_history = int(bg_history * 0.05)  # 5% of history
+    warmup_from_seconds = int(warmup_seconds * effective_fps)
+    max_warmup_frames = int(10.0 * effective_fps)  # Cap at 10 seconds
+    warmup_frames = max(warmup_from_seconds, min(min_warmup_from_history, max_warmup_frames))
+    warmup_duration_s = warmup_frames / effective_fps
+    log(f"  [Warmup] {warmup_frames} frames ({warmup_duration_s:.1f}s) to stabilize background model")
 
     in_event = False
     event_start = 0.0
@@ -400,16 +409,32 @@ def detect_motion_segments_opencv(
         gray = prep(frame)
 
         # Apply background subtraction (GPU or CPU)
+        # Adaptive learning rate strategy to fix subset axiom violation:
+        # - During warmup: Fast learning to quickly establish initial background
+        # - During stillness: Moderate learning to update background to current scene
+        # - During motion: Very slow learning to prevent moving objects from being absorbed
+        # This ensures the background model represents the current static scene, not historical frames
+        if processed_frame_idx <= warmup_frames:
+            # Fast learning during warmup to quickly establish the background
+            learning_rate = -1  # Use default automatic learning rate for fast convergence
+        elif still_run > 0:
+            # Moderate learning during stillness to reset background to current scene
+            # This ensures background model stays current and doesn't drift over long videos
+            learning_rate = 0.01
+        else:
+            # Very slow learning during motion to prevent moving objects from being absorbed
+            learning_rate = 0.0001
+        
         if gpu_available:
             try:
                 gpu_gray = cv2.cuda_GpuMat()
                 gpu_gray.upload(gray)
-                gpu_fgmask = fgbg.apply(gpu_gray, -1)
+                gpu_fgmask = fgbg.apply(gpu_gray, learning_rate)
                 fgmask = gpu_fgmask.download()
             except Exception:
-                fgmask = fgbg.apply(gray)
+                fgmask = fgbg.apply(gray, learning_rate)
         else:
-            fgmask = fgbg.apply(gray)
+            fgmask = fgbg.apply(gray, learning_rate)
 
         # Clean up mask:
         # - remove shadows (MOG2 shadows are 127)
