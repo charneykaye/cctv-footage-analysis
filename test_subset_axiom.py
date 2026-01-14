@@ -306,13 +306,6 @@ def main():
     
     tolerance = 3.0  # 3 second tolerance for timestamp matching
     
-    # Verify subset relations
-    print("\n" + "=" * 80)
-    print("VERIFYING SUBSET AXIOM")
-    print("=" * 80)
-    
-    tolerance = 3.0  # 3 second tolerance for timestamp matching
-    
     # Test 1: Cc ⊆ Bc
     print("\n[Test 1] Verifying Cc ⊆ Bc")
     is_cc_subset_bc, missing_cc, details_cc_bc, offset_c_to_b = verify_subset_relation(
