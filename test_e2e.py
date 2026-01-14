@@ -55,7 +55,7 @@ def main():
         shutil.rmtree(output_dir)
     
     # Verify test video exists
-    test_video = test_video_dir / "2min.mp4"
+    test_video = test_video_dir / "2min-subset-of-4min.mp4"
     if not test_video.exists():
         print(f"❌ FAILED: Test video not found: {test_video}")
         return 1

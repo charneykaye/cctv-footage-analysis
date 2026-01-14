@@ -2,12 +2,12 @@
 """
 Subset Axiom Test for motion_cctv.py
 
-Tests the subset axiom: C ⊂ B ⊂ A implies Cc ⊆ Bc ⊆ Ac
+Tests the subset axiom: C ⊂ B ⊂ A implies Cc ⊂ Bc ⊂ Ac
 
 Given:
 - A = 6min/6min.mp4 (full video)
-- B = 4min/4min.mp4 (subset of A)
-- C = 2min/2min.mp4 (subset of B)
+- B = 4min/4min-subset-of-6min.mp4 (subset of A)
+- C = 2min/2min-subset-of-4min.mp4 (subset of B)
 
 Then:
 - Ac = motion segments detected in A
@@ -17,7 +17,7 @@ Then:
 The test verifies:
 1. Every segment in Bc corresponds to a segment in Ac
 2. Every segment in Cc corresponds to a segment in Bc
-3. Therefore: Cc ⊆ Bc ⊆ Ac (transitive subset property)
+3. Therefore: Cc ⊂ Bc ⊂ Ac (transitive subset property)
 """
 
 import csv
@@ -268,8 +268,8 @@ def main():
     
     # Check videos exist
     video_a = video_a_dir / "6min.mp4"
-    video_b = video_b_dir / "4min.mp4"
-    video_c = video_c_dir / "2min.mp4"
+    video_b = video_b_dir / "4min-subset-of-6min.mp4"
+    video_c = video_c_dir / "2min-subset-of-4min.mp4"
     
     for video, name in [(video_a, "A (6min)"), (video_b, "B (4min)"), (video_c, "C (2min)")]:
         if not video.exists():
