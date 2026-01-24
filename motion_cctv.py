@@ -408,33 +408,35 @@ def detect_motion_segments_opencv(
         gray = prep(frame)
 
         # Apply background subtraction (GPU or CPU)
+        # 
         # ADAPTIVE LEARNING RATE: Key insight from issue analysis:
-        # - When motion is detected, use a very low learning rate (or 0) to prevent 
-        #   moving objects from being absorbed into background
-        # - When stillness is confirmed, use a higher learning rate to update the 
-        #   background model with the current frame (which we know is "true background")
-        # This ensures the background model stays accurate over long clips while still
-        # preventing moving objects from polluting it during motion events.
-        #
-        # We use still_run and motion_run from the PREVIOUS frame to determine the 
-        # learning rate for the current frame. This ensures consistent behavior.
+        # - When motion is detected, freeze the background to prevent moving objects
+        #   from being absorbed into the background model
+        # - When stillness is confirmed, update the background model aggressively
+        #   because the current frame represents "true background"
+        # 
+        # TIMING: still_run and motion_run are updated AFTER this point in the loop
+        # (around line 505). Therefore, when we read them here, we're getting values
+        # from the PREVIOUS frame's analysis. This is the intended behavior:
+        # - If previous frame was still -> we trust current frame is also still -> update background
+        # - If previous frame had motion -> current frame might still have motion -> freeze background
         #
         # The threshold for "confirmed stillness" uses half of min_still_frames to
-        # start updating sooner, providing faster background adaptation.
+        # start updating the background sooner, providing faster adaptation.
         confirmed_still_threshold = max(1, min_still_frames // 2)
         
         if still_run >= confirmed_still_threshold:
-            # Scene has been still for several frames - this is the ideal time to 
-            # update background model. Use a moderate learning rate to capture the 
-            # current frame as the new background reference.
+            # Previous frame(s) were still - this is the ideal time to update the
+            # background model. Use a moderate learning rate to capture the current
+            # frame as the new background reference.
             learning_rate = 0.01
         elif motion_run > 0:
-            # Motion was detected in previous frame(s) - freeze background model 
-            # to prevent absorbing moving objects into the background
+            # Previous frame(s) had motion - freeze background model to prevent
+            # absorbing moving objects into the background.
             learning_rate = 0.0
         else:
             # Transitional state (just started processing, or motion just ended)
-            # Use very slow learning rate for stability
+            # Use very slow learning rate for stability.
             learning_rate = 0.0001
         
         if gpu_available:

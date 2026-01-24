@@ -106,6 +106,12 @@ def run_motion_detection(input_folder: Path, output_dir: Path, repo_root: Path) 
     return True, segments
 
 
+# Default tolerance for timing comparisons (in seconds).
+# This accounts for differences in warmup periods, frame timing variations,
+# and padding differences between parent and subset clips.
+DEFAULT_TIMING_TOLERANCE = 5.0
+
+
 def segments_to_intervals(segments: List[dict]) -> List[Tuple[float, float]]:
     """Convert segment dicts to list of (start, end) tuples."""
     intervals = []
@@ -121,21 +127,31 @@ def offset_intervals(intervals: List[Tuple[float, float]], offset: float) -> Lis
     return [(s + offset, e + offset) for s, e in intervals]
 
 
-def interval_is_covered(interval: Tuple[float, float], covering_intervals: List[Tuple[float, float]], tolerance: float = 2.0) -> bool:
+def interval_is_covered(interval: Tuple[float, float], covering_intervals: List[Tuple[float, float]], tolerance: float = DEFAULT_TIMING_TOLERANCE) -> bool:
     """
     Check if an interval is approximately covered by a set of covering intervals.
     
-    The interval (a, b) is considered covered if there exists a covering interval (c, d)
-    such that c <= a + tolerance and d >= b - tolerance.
+    The interval (start, end) is considered "covered" if there exists a covering 
+    interval (c_start, c_end) such that:
+      - c_start <= start + tolerance  (covering starts at or before target, with slack)
+      - c_end >= end - tolerance       (covering ends at or after target, with slack)
+    
+    This provides symmetric tolerance on both ends: we allow the covering interval
+    to be up to `tolerance` seconds "inside" the target interval on either end.
+    
+    Example with tolerance=5:
+      - Target: [10, 50]
+      - Covering [8, 48] passes: 8 <= 15 and 48 >= 45
+      - Covering [20, 40] fails: 20 > 15 (starts too late)
     
     This allows for small timing differences due to:
     - Warmup period differences between clips
-    - Frame-level timing variations
+    - Frame-level timing variations  
     - Padding differences
     """
     start, end = interval
     for c_start, c_end in covering_intervals:
-        # Check if this covering interval contains our interval (with tolerance)
+        # Check if this covering interval approximately contains our interval
         if c_start <= start + tolerance and c_end >= end - tolerance:
             return True
     return False
@@ -145,7 +161,7 @@ def check_subset_axiom(
     parent_intervals: List[Tuple[float, float]], 
     subset_intervals: List[Tuple[float, float]], 
     subset_offset: float,
-    tolerance: float = 3.0
+    tolerance: float = DEFAULT_TIMING_TOLERANCE
 ) -> Tuple[bool, List[str]]:
     """
     Verify the subset axiom: all motion detected in the subset (when mapped to 
@@ -330,8 +346,8 @@ def test_subset_axiom(repo_root: Path, example_footage: Path) -> int:
             axiom_passed, errors = check_subset_axiom(
                 parent_intervals, 
                 subset_intervals, 
-                subset_offset,
-                tolerance=5.0  # Allow 5 second tolerance for timing differences
+                subset_offset
+                # Uses DEFAULT_TIMING_TOLERANCE
             )
             
             if axiom_passed:
