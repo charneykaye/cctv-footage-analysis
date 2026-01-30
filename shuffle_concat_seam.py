@@ -220,19 +220,29 @@ def get_last_frame(ffmpeg_exe: str, ffprobe_exe: str, video_path: Path, tmpdir: 
         return None
     
     # Get the last frame (slightly before end to avoid edge cases)
-    last_frame_time = max(0, duration - 0.1)
+    # Handle very short videos by ensuring we don't go negative
+    offset = min(0.1, duration * 0.5)  # Use half duration for very short videos
+    last_frame_time = max(0, duration - offset)
     frame_path = tmpdir / "last_frame.png"
     
-    if not extract_frame_at_time(ffmpeg_exe, video_path, last_frame_time, frame_path):
-        log(f"  WARNING: Could not extract last frame from {video_path.name}")
-        return None
-    
-    frame = cv2.imread(str(frame_path))
-    if frame is None:
-        log(f"  WARNING: Could not read extracted frame from {video_path.name}")
-        return None
-    
-    return frame
+    try:
+        if not extract_frame_at_time(ffmpeg_exe, video_path, last_frame_time, frame_path):
+            log(f"  WARNING: Could not extract last frame from {video_path.name}")
+            return None
+        
+        frame = cv2.imread(str(frame_path))
+        if frame is None:
+            log(f"  WARNING: Could not read extracted frame from {video_path.name}")
+            return None
+        
+        return frame
+    finally:
+        # Ensure cleanup even on exceptions
+        try:
+            if frame_path.exists():
+                frame_path.unlink()
+        except OSError:
+            pass
 
 def preprocess_frame_for_comparison(frame: Any, blur_size: int = 5) -> Any:
     """Preprocess frame for comparison: grayscale + Gaussian blur."""
@@ -247,6 +257,16 @@ def compute_frame_difference(frame1: Any, frame2: Any) -> float:
     
     Lower values indicate more similar frames.
     """
+    # Validate frame dimensions
+    if frame1 is None or frame2 is None:
+        return float('inf')
+    if len(frame1.shape) < 2 or len(frame2.shape) < 2:
+        return float('inf')
+    if frame1.shape[0] == 0 or frame1.shape[1] == 0:
+        return float('inf')
+    if frame2.shape[0] == 0 or frame2.shape[1] == 0:
+        return float('inf')
+    
     # Resize to match dimensions if different
     if frame1.shape != frame2.shape:
         frame2 = cv2.resize(frame2, (frame1.shape[1], frame1.shape[0]))
@@ -266,29 +286,62 @@ def find_best_matching_frame(
 ) -> Tuple[float, float]:
     """Find the frame in the first haystack_duration seconds of video that best matches needle_frame.
     
+    Uses batch frame extraction for efficiency.
+    
     Returns:
         Tuple of (best_time_seconds, best_mse_score)
+        Returns (0.0, inf) if no valid frames could be compared.
     """
     if not HAS_OPENCV:
         raise RuntimeError("OpenCV is required for frame comparison. Install with: pip install opencv-python")
+    
+    # Ensure haystack_duration is valid
+    if haystack_duration <= 0:
+        return 0.0, float('inf')
     
     # Preprocess needle frame
     needle_processed = preprocess_frame_for_comparison(needle_frame)
     
     # Calculate frame interval based on fps
-    frame_interval = 1.0 / fps if fps > 0 else 1.0 / 30.0
+    effective_fps = fps if fps > 0 else 30.0
+    frame_interval = 1.0 / effective_fps
     
     best_time = 0.0
     best_mse = float('inf')
+    frames_compared = 0
     
-    # Sample frames in the haystack duration
-    current_time = 0.0
-    frame_count = 0
+    # Create a subdirectory for batch extraction
+    batch_dir = tmpdir / "haystack_batch"
+    batch_dir.mkdir(exist_ok=True)
     
-    while current_time < haystack_duration:
-        frame_path = tmpdir / f"haystack_frame_{frame_count:04d}.png"
+    try:
+        # Extract all frames in the haystack duration using a single ffmpeg call
+        # This is much more efficient than individual frame extraction
+        cmd = [
+            ffmpeg_exe,
+            "-ss", "0",
+            "-i", str(video_path),
+            "-t", str(haystack_duration),
+            "-vf", f"fps={effective_fps}",
+            "-y",
+            str(batch_dir / "frame_%04d.png")
+        ]
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         
-        if extract_frame_at_time(ffmpeg_exe, video_path, current_time, frame_path):
+        if p.returncode != 0:
+            # Fallback: if batch extraction fails, try individual frame extraction
+            log(f"  WARNING: Batch extraction failed, falling back to individual frames")
+            return _find_best_matching_frame_individual(
+                ffmpeg_exe, needle_processed, video_path, 
+                haystack_duration, frame_interval, tmpdir
+            )
+        
+        # Process extracted frames
+        frame_files = sorted(batch_dir.glob("frame_*.png"))
+        
+        for i, frame_path in enumerate(frame_files):
+            current_time = i * frame_interval
+            
             haystack_frame = cv2.imread(str(frame_path))
             if haystack_frame is not None:
                 haystack_processed = preprocess_frame_for_comparison(haystack_frame)
@@ -297,10 +350,57 @@ def find_best_matching_frame(
                 if mse < best_mse:
                     best_mse = mse
                     best_time = current_time
-            
+                
+                frames_compared += 1
+        
+        if frames_compared == 0:
+            log(f"  WARNING: No valid frames could be compared in haystack")
+        
+    finally:
+        # Clean up batch directory
+        try:
+            for f in batch_dir.glob("*.png"):
+                f.unlink()
+            batch_dir.rmdir()
+        except OSError:
+            pass
+    
+    return best_time, best_mse
+
+
+def _find_best_matching_frame_individual(
+    ffmpeg_exe: str,
+    needle_processed: Any,
+    video_path: Path,
+    haystack_duration: float,
+    frame_interval: float,
+    tmpdir: Path
+) -> Tuple[float, float]:
+    """Fallback: Find best matching frame using individual frame extraction."""
+    best_time = 0.0
+    best_mse = float('inf')
+    
+    current_time = 0.0
+    frame_count = 0
+    
+    while current_time < haystack_duration:
+        frame_path = tmpdir / f"haystack_frame_{frame_count:04d}.png"
+        
+        try:
+            if extract_frame_at_time(ffmpeg_exe, video_path, current_time, frame_path):
+                haystack_frame = cv2.imread(str(frame_path))
+                if haystack_frame is not None:
+                    haystack_processed = preprocess_frame_for_comparison(haystack_frame)
+                    mse = compute_frame_difference(needle_processed, haystack_processed)
+                    
+                    if mse < best_mse:
+                        best_mse = mse
+                        best_time = current_time
+        finally:
             # Clean up frame file
             try:
-                frame_path.unlink()
+                if frame_path.exists():
+                    frame_path.unlink()
             except OSError:
                 pass
         
@@ -379,6 +479,9 @@ def shuffle_and_concatenate_videos(
     
     if not HAS_OPENCV:
         raise RuntimeError("OpenCV is required for frame comparison. Install with: pip install opencv-python")
+    
+    if haystack_duration <= 0:
+        raise ValueError("haystack_duration must be positive")
     
     # Shuffle the files
     shuffled_files = video_files.copy()
@@ -537,6 +640,11 @@ Algorithm:
     if not HAS_OPENCV:
         log("ERROR: OpenCV is required for frame comparison.")
         log("Install with: pip install opencv-python")
+        sys.exit(1)
+    
+    # Validate haystack duration
+    if args.haystack_duration <= 0:
+        log("ERROR: --haystack-duration must be a positive value")
         sys.exit(1)
     
     # Validate input directory
