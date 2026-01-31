@@ -54,7 +54,7 @@ def main():
     # Setup paths
     repo_root = Path(__file__).parent
     example_footage = repo_root / "example_footage"
-    
+
     # Check if example footage exists
     if not example_footage.exists():
         print("\n⚠️  SKIPPED: Example footage not found")
@@ -62,7 +62,7 @@ def main():
         print("This test requires example footage to run.")
         print("To run this test, provide example footage in the expected location.")
         return 0
-    
+
     output_dir = example_footage / "motion_output"
     
     # Clean up any existing output
