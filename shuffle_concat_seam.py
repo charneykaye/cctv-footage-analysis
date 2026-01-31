@@ -461,6 +461,95 @@ def trim_video_streamcopy(ffmpeg_exe: str, input_path: Path, output_path: Path, 
     log(f"  Trimmed successfully")
     return True
 
+
+def remux_with_fps(ffmpeg_exe: str, input_path: Path, output_path: Path, target_fps: float, tmpdir: Path) -> bool:
+    """Remux video with correct FPS using two-step H264 bitstream extraction method.
+    
+    This method properly sets the output FPS by:
+    1. Extracting video to raw H264 bitstream
+    2. Remuxing with the new framerate
+    
+    This is more reliable than using -r flag which may not work correctly with stream copy.
+    """
+    log(f"[fps] Setting output FPS to {target_fps:.3f}...")
+    
+    # Step 1: Extract video to raw H264 bitstream
+    h264_path = tmpdir / "temp_bitstream.h264"
+    
+    cmd_extract = [
+        ffmpeg_exe,
+        "-y",
+        "-i", str(input_path),
+        "-c", "copy",
+        "-an",  # Remove audio for bitstream extraction
+        "-f", "h264",
+        str(h264_path)
+    ]
+    
+    log(f"[fps] Step 1: Extracting H264 bitstream...")
+    p = subprocess.run(cmd_extract, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if p.returncode != 0:
+        log(f"  ERROR: H264 extraction failed:\n{p.stderr}")
+        return False
+    
+    # Step 2: Remux with new framerate
+    # First, create video-only output with correct FPS
+    video_only_path = tmpdir / "temp_video_only.mp4"
+    
+    cmd_remux = [
+        ffmpeg_exe,
+        "-y",
+        "-r", str(target_fps),
+        "-i", str(h264_path),
+        "-c", "copy",
+        str(video_only_path)
+    ]
+    
+    log(f"[fps] Step 2: Remuxing with FPS={target_fps:.3f}...")
+    p = subprocess.run(cmd_remux, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if p.returncode != 0:
+        log(f"  ERROR: Remuxing failed:\n{p.stderr}")
+        # Clean up
+        try:
+            h264_path.unlink()
+        except OSError:
+            pass
+        return False
+    
+    # Clean up bitstream file
+    try:
+        h264_path.unlink()
+    except OSError:
+        pass
+    
+    # Step 3: Merge video with audio from original file
+    log(f"[fps] Step 3: Merging audio from original...")
+    cmd_merge = [
+        ffmpeg_exe,
+        "-y",
+        "-i", str(video_only_path),
+        "-i", str(input_path),
+        "-c", "copy",
+        "-map", "0:v:0",      # Video from remuxed file
+        "-map", "1:a?",        # Audio from original (if exists)
+        str(output_path)
+    ]
+    
+    p = subprocess.run(cmd_merge, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    
+    # Clean up video-only file
+    try:
+        video_only_path.unlink()
+    except OSError:
+        pass
+    
+    if p.returncode != 0:
+        log(f"  ERROR: Audio merge failed:\n{p.stderr}")
+        return False
+    
+    log(f"[fps] ✓ Successfully set output FPS to {target_fps:.3f}")
+    return True
+
 # ---------------------------
 # Main concatenation with seam matching
 # ---------------------------
@@ -471,7 +560,8 @@ def shuffle_and_concatenate_videos(
     video_files: List[Path],
     output_path: Path,
     haystack_duration: float = 1.0,
-    seed: Optional[int] = None
+    seed: Optional[int] = None,
+    output_fps: Optional[float] = None
 ) -> None:
     """Shuffle videos and concatenate with seam frame matching."""
     if not video_files:
@@ -599,6 +689,29 @@ def shuffle_and_concatenate_videos(
         if p.returncode != 0:
             raise RuntimeError(f"Concatenation failed:\n{p.stderr}")
         
+        log(f"\n[concat] ✓ Successfully created initial concatenation")
+        
+        # Remux with correct FPS using the two-step H264 bitstream method (only if --fps specified)
+        if output_fps is not None:
+            log(f"\n[fps] Applying correct framerate to output...")
+            temp_concat_output = tmpdir_path / "concat_temp.mp4"
+            
+            # Move the concatenated file to temp location
+            import shutil as _shutil
+            _shutil.move(str(output_path), str(temp_concat_output))
+            
+            # Remux with correct FPS
+            if not remux_with_fps(ffmpeg_exe, temp_concat_output, output_path, output_fps, tmpdir_path):
+                # If remux fails, restore original
+                _shutil.move(str(temp_concat_output), str(output_path))
+                log(f"  WARNING: FPS remux failed, using original concatenated output")
+            else:
+                # Clean up temp file
+                try:
+                    temp_concat_output.unlink()
+                except OSError:
+                    pass
+        
         log(f"\n[concat] ✓ Successfully created {output_path}")
         
         # Show output file info
@@ -635,6 +748,8 @@ Algorithm:
                     help="Duration in seconds to search for best matching frame (default: 1.0)")
     ap.add_argument("--seed", type=int, default=None,
                     help="Random seed for reproducible shuffling (default: random)")
+    ap.add_argument("--fps", type=float, default=None,
+                    help="Output framerate (uses H264 bitstream remux method to set FPS)")
     ap.add_argument("--ffmpeg", type=str, default=None, help="Path to ffmpeg executable")
     ap.add_argument("--ffprobe", type=str, default=None, help="Path to ffprobe executable")
     
@@ -693,7 +808,8 @@ Algorithm:
             video_files,
             output_file,
             haystack_duration=args.haystack_duration,
-            seed=args.seed
+            seed=args.seed,
+            output_fps=args.fps
         )
     except Exception as e:
         log(f"\nERROR: {e}")
