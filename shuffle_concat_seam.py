@@ -471,8 +471,7 @@ def shuffle_and_concatenate_videos(
     video_files: List[Path],
     output_path: Path,
     haystack_duration: float = 1.0,
-    seed: Optional[int] = None,
-    output_fps: Optional[int] = None
+    seed: Optional[int] = None
 ) -> None:
     """Shuffle videos and concatenate with seam frame matching."""
     if not video_files:
@@ -497,13 +496,7 @@ def shuffle_and_concatenate_videos(
     # Get specs from first file
     log(f"\n[specs] Detecting specs from first file: {shuffled_files[0].name}")
     target_specs = get_video_specs(ffprobe_exe, shuffled_files[0])
-    
-    # Override FPS if specified by user
-    if output_fps is not None:
-        target_specs['fps'] = float(output_fps)
-        log(f"[specs] Target specs: {target_specs['width']}x{target_specs['height']} @ {target_specs['fps']:.2f} fps (FPS overridden by --fps)")
-    else:
-        log(f"[specs] Target specs: {target_specs['width']}x{target_specs['height']} @ {target_specs['fps']:.2f} fps")
+    log(f"[specs] Target specs: {target_specs['width']}x{target_specs['height']} @ {target_specs['fps']:.2f} fps")
     
     # Create temp directory for intermediate files
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -549,14 +542,10 @@ def shuffle_and_concatenate_videos(
             temp_output = tmpdir_path / f"processed_{i:04d}.mp4"
             
             # Check if we need to re-encode or can stream copy
-            # Force re-encode if output_fps is specified (FPS change requires re-encoding)
-            needs_reencode = not specs_match(target_specs, file_specs) or output_fps is not None
+            needs_reencode = not specs_match(target_specs, file_specs)
             
             if needs_reencode:
-                if output_fps is not None:
-                    log(f"  Re-encoding to target FPS {target_specs['fps']:.2f}")
-                else:
-                    log(f"  Specs differ: {file_specs['width']}x{file_specs['height']} @ {file_specs['fps']:.2f} fps")
+                log(f"  Specs differ: {file_specs['width']}x{file_specs['height']} @ {file_specs['fps']:.2f} fps")
                 if reencode_video(ffmpeg_exe, video_file, temp_output, target_specs, trim_start):
                     processed_files.append(temp_output)
                 else:
@@ -595,7 +584,6 @@ def shuffle_and_concatenate_videos(
                 f.write(f"file '{escaped}'\n")
         
         # Concatenate using concat demuxer
-        # All clips are already re-encoded with correct FPS, so we can use stream copy
         log(f"[concat] Concatenating {len(processed_files)} files into {output_path}")
         cmd = [
             ffmpeg_exe,
@@ -649,8 +637,6 @@ Algorithm:
                     help="Random seed for reproducible shuffling (default: random)")
     ap.add_argument("--ffmpeg", type=str, default=None, help="Path to ffmpeg executable")
     ap.add_argument("--ffprobe", type=str, default=None, help="Path to ffprobe executable")
-    ap.add_argument("--fps", type=int, default=None,
-                    help="Override playback speed of output video (integer FPS, no re-encoding)")
     
     args = ap.parse_args()
     
@@ -707,8 +693,7 @@ Algorithm:
             video_files,
             output_file,
             haystack_duration=args.haystack_duration,
-            seed=args.seed,
-            output_fps=args.fps
+            seed=args.seed
         )
     except Exception as e:
         log(f"\nERROR: {e}")
