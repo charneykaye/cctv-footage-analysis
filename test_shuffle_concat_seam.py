@@ -70,7 +70,7 @@ class TestFrameComparison(unittest.TestCase):
         
         mse = compute_frame_difference(frame1, frame2)
         
-        # Half the pixels differ by 255, so MSE = 0.5 * 255^2 = 32512.5
+        # Half the pixels differ by 255, so MSE = 0.5 * (255**2) = 32512.5
         self.assertEqual(mse, 32512.5)
     
     def test_compute_frame_difference_none(self):
