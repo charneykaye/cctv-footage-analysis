@@ -860,7 +860,10 @@ def shuffle_and_concatenate_videos(
             # Determine trim start time
             trim_start = 0.0
             
-            if i > 0 and prev_last_frames is not None and not no_trim:
+            if i > 0 and no_trim:
+                # --no-trim mode: skip needle-haystack matching and use full clips
+                log(f"  Skipping seam matching (--no-trim mode)")
+            elif i > 0 and prev_last_frames is not None:
                 # Find best matching frame pair in haystack (motion-aware matching)
                 log(f"  Finding best seam match (haystack={haystack_duration:.1f}s, 2-frame motion matching)...")
                 
@@ -878,9 +881,6 @@ def shuffle_and_concatenate_videos(
                 trim_start += extra_frames / file_specs["fps"]
                 
                 log(f"  Best match at {trim_start:.3f}s (combined MSE={mse:.2f}, +{extra_frames} frames)")
-            elif no_trim:
-                # --no-trim mode: skip needle-haystack matching and use full clips
-                log(f"  Skipping seam matching (--no-trim mode)")
             
             # Determine output file path
             temp_output = tmpdir_path / f"processed_{i:04d}.mp4"

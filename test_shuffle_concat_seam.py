@@ -226,8 +226,9 @@ class TestNoTrimMode(unittest.TestCase):
     
     @patch('shuffle_concat_seam.HAS_OPENCV', True)
     @patch('shuffle_concat_seam.find_best_matching_frame_pair')
-    def test_no_trim_skips_frame_matching(self, mock_find_best):
-        """Verify that no_trim=True skips the frame matching function."""
+    @patch('shuffle_concat_seam.get_last_two_frames')
+    def test_no_trim_skips_frame_matching(self, mock_get_last_frames, mock_find_best):
+        """Verify that no_trim=True skips the frame matching function and doesn't extract last frames."""
         from shuffle_concat_seam import shuffle_and_concatenate_videos
         import tempfile
         
@@ -257,11 +258,25 @@ class TestNoTrimMode(unittest.TestCase):
                 )
             except Exception:
                 # Expected to fail due to missing ffmpeg, but we can still check
-                # that find_best_matching_frame_pair was not called
+                # that find_best_matching_frame_pair and get_last_two_frames were not called
                 pass
             
             # Verify that frame matching was not called when no_trim=True
             mock_find_best.assert_not_called()
+            # Verify that get_last_two_frames was also not called (not needed for no_trim mode)
+            mock_get_last_frames.assert_not_called()
+    
+    def test_no_trim_flag_default(self):
+        """Verify that no_trim defaults to False in function signature."""
+        from shuffle_concat_seam import shuffle_and_concatenate_videos
+        import inspect
+        
+        # Get the function signature
+        sig = inspect.signature(shuffle_and_concatenate_videos)
+        no_trim_param = sig.parameters['no_trim']
+        
+        # Verify default value is False
+        self.assertEqual(no_trim_param.default, False)
 
 
 class TestDocumentation(unittest.TestCase):
