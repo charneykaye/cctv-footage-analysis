@@ -5,6 +5,7 @@ Unit tests for shuffle_concat_seam.py
 Tests the core frame matching functions to ensure motion-aware seam matching works correctly.
 """
 
+import subprocess
 import sys
 import unittest
 from unittest.mock import patch, MagicMock
@@ -305,15 +306,18 @@ class TestNoTrimMode(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir_path = Path(tmpdir)
             
-            # Create fake video files
+            # Create placeholder video files (content doesn't matter since get_video_specs is mocked)
+            # Using bytes to be more representative of actual video files
             fake_video1 = tmpdir_path / "test1.mp4"
-            fake_video1.write_text("fake video content 1")
+            fake_video1.write_bytes(b'\x00\x00\x00\x00')
             fake_video2 = tmpdir_path / "test2.mp4"
-            fake_video2.write_text("fake video content 2")
+            fake_video2.write_bytes(b'\x00\x00\x00\x00')
             
             output_path = tmpdir_path / "output.mp4"
             
             # Try to call with no_trim=False (default)
+            # This will fail when trying to actually process the fake video files with ffmpeg,
+            # but we only care about verifying that the frame matching functions are called
             try:
                 shuffle_and_concatenate_videos(
                     ffmpeg_exe="ffmpeg",
@@ -325,9 +329,8 @@ class TestNoTrimMode(unittest.TestCase):
                     output_fps=None,
                     no_trim=False  # Explicitly set to False (the default)
                 )
-            except Exception:
-                # Expected to fail due to missing ffmpeg, but we can still check
-                # that find_best_matching_frame_pair WAS called for successive clips
+            except (RuntimeError, subprocess.CalledProcessError, OSError):
+                # Expected failures when ffmpeg tries to process placeholder files
                 pass
             
             # Verify that get_last_two_frames was called (to extract frames for matching)
