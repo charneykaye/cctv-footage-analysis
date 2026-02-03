@@ -878,7 +878,7 @@ def shuffle_and_concatenate_videos(
                 log(f"  Skipping seam matching (--no-trim mode)")
             elif i > 0 and prev_last_frames is not None:
                 # Find best matching frame pair in haystack (motion-aware matching)
-                log(f"  Finding best seam match (skip={haystack_skip:.1f}s, haystack={haystack_duration:.1f}s, 2-frame motion matching)...")
+                log(f"  Finding best seam match (skip={haystack_skip:.2f}s, haystack={haystack_duration:.2f}s, 2-frame motion matching)...")
                 
                 trim_start, mse = find_best_matching_frame_pair(
                     ffmpeg_exe,
@@ -1002,14 +1002,14 @@ Example usage:
   # Original mode with explicit output file
   python shuffle_concat_seam.py /path/to/videos output.mp4
   python shuffle_concat_seam.py /path/to/videos output.mp4 --haystack-duration 2.0
-  python shuffle_concat_seam.py /path/to/videos output.mp4 --haystack-skip 1.0 --haystack-duration 2.0
+  python shuffle_concat_seam.py /path/to/videos output.mp4 --haystack-skip 1.5 --haystack-duration 2.5
   python shuffle_concat_seam.py /path/to/videos output.mp4 --seed 42
   python shuffle_concat_seam.py /path/to/videos output.mp4 --recursive
   
   # Folder mode with automatic output file naming
   python shuffle_concat_seam.py --folder /path/to/videos
   python shuffle_concat_seam.py --fps 20 --folder ~/Documents/Videos/MyVideo
-  python shuffle_concat_seam.py --fps 20 --haystack-skip 1 --haystack-duration 2 --folder test
+  python shuffle_concat_seam.py --fps 20 --haystack-skip 1.7 --haystack-duration 2.3 --folder test
 
 Algorithm:
   For each successive clip, the script examines frames in the first N seconds
@@ -1018,7 +1018,7 @@ Algorithm:
   best-matching frame, creating a smoother visual transition.
   
   With --haystack-skip, you can skip time at the beginning of each successive
-  clip before searching. For example, --haystack-skip 1 --haystack-duration 2
+  clip before searching. For example, --haystack-skip 1.0 --haystack-duration 2.0
   will skip the first 1 second and search from 1.0 to 3.0 seconds.
         """
     )
