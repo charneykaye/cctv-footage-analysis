@@ -1019,7 +1019,7 @@ Algorithm:
   
   With --haystack-skip, you can skip time at the beginning of each successive
   clip before searching. For example, --haystack-skip 1.0 --haystack-duration 2.0
-  will skip the first 1 second and search from 1.0 to 3.0 seconds.
+  will skip the first 1.0 seconds and search from 1.0 to 3.0 seconds.
         """
     )
     
